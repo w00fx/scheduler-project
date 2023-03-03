@@ -1,0 +1,181 @@
+service: scheduler-poc
+frameworkVersion: '3'
+
+plugins:
+  - serverless-iam-roles-per-function
+  # - serverless-mocha-plugin
+  - serverless-export-outputs
+  - serverless-plugin-common-excludes
+  - serverless-plugin-include-dependencies
+
+custom:
+  exportOutputs:
+    - HttpApiUrl
+
+provider:
+  region: us-east-1
+  name: aws
+  runtime: nodejs18.x
+  architecture: arm64
+  memorySize: 256
+  timeout: 29
+  tracing:
+    apiGateway: true
+    lambda: true
+
+package:
+  excludeDevDependencies: false
+  individually: true
+  patterns:
+    - '!.github/**'
+    - '!images/**'
+    - '!lambdas/**'
+    - '!scripts/**'
+    - '!integration_tests/**'
+
+functions:
+  createSchedule:
+    handler: lambdas/createSchedule.handler
+    environment:
+      EXECUTE_ARN: !GetAtt TriggerStreamLambdaFunction.Arn
+      ROLE_ARN: !GetAtt schedulerRole.Arn
+      TABLE_NAME: !Ref schedulerTable
+    package:
+      patterns:
+       - 'lambdas/createSchedule.js'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: !GetAtt schedulerTable.Arn
+      - Effect: Allow
+        Action:
+          - scheduler:CreateSchedule*
+          - scheduler:TagResource
+          - scheduler:GetSchedule*
+          - scheduler:ListSchedule*
+        Resource:
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule/*/*"
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule-group/*"
+      - Effect: Allow
+        Action: iam:PassRole
+        Resource: '*'
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Resource: "*"
+    events:
+      - httpApi:
+          path: /
+          method: POST
+
+  deleteSchedule:
+    handler: lambdas/deleteSchedule.handler
+    environment:
+      TABLE_NAME: !Ref schedulerTable
+    package:
+      patterns: 
+       - 'lambdas/deleteSchedule.js'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: !GetAtt schedulerTable.Arn
+      - Effect: Allow
+        Action:
+          - scheduler:DeleteSchedule*
+          - scheduler:TagResource
+          - scheduler:GetSchedule*
+          - scheduler:ListSchedule*
+        Resource: 
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule/*/*"
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule-group/*"
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Resource: "*"
+    events:
+      - httpApi:
+          path: /
+          method: DELETE
+
+  triggerStream:
+    handler: lambdas/triggerStream.handler
+    environment:
+      TABLE_NAME: !Ref schedulerTable
+    package:
+      patterns: 
+       - 'lambdas/triggerStream.js'
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - scheduler:DeleteSchedule*
+          - scheduler:TagResource
+          - scheduler:GetSchedule*
+          - scheduler:ListSchedule*
+        Resource: 
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule/*/*"
+          - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule-group/*"
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: !GetAtt schedulerTable.Arn
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+          - xray:PutTelemetryRecords
+        Resource: "*"
+
+resources:
+  Resources:
+    schedulerTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: type
+            AttributeType: S
+          - AttributeName: identifier
+            AttributeType: S
+          - AttributeName: schedule_name
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        KeySchema:
+          - AttributeName: type
+            KeyType: HASH
+          - AttributeName: identifier
+            KeyType: RANGE
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
+        GlobalSecondaryIndexes:
+          - IndexName: scheduleName
+            KeySchema:
+              - AttributeName: schedule_name
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        # TableName: ${self:service}-notesTable-${sls:stage}
+
+    schedulerRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - scheduler.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: myPolicyName
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource: '*'
