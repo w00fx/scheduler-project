@@ -33,7 +33,8 @@ const createTransactions = (items) => {
                 TableName: TABLE_NAME,
                 Item: {
                     ...item,
-                    status: 'PENDING'
+                    status: 'PENDING',
+                    schedule_name: uuid.v4()
                 },
                 ConditionExpression: 'attribute_not_exists(#type)',
                 ExpressionAttributeNames: {
@@ -49,18 +50,17 @@ const createSchedules = async (items) => {
     const created_schedules = [];
     const failed_schedules = [];
     for (const item of items) {
-        const name = uuid.v4();
         const input = {
-            type: item.type,
-            identifier: item.identifier,
-            schedule_name: name,
-            payload: item.payload,
+            type: item.Put.Item.type,
+            identifier: item.Put.Item.identifier,
+            schedule_name: item.Put.Item.schedule_name,
+            payload: item.Put.Item.payload,
         }
 
         try {
             const resp = await SchedulerClient.createSchedule({
-                Name: name,
-                ScheduleExpression: `at(${item.trigger_time})`,
+                Name: item.Put.Item.schedule_name,
+                ScheduleExpression: `at(${item.Put.Item.trigger_time})`,
                 FlexibleTimeWindow: {
                     Mode: 'OFF'
                 },
@@ -97,17 +97,17 @@ exports.handler = async (event) => {
         statusCode: 201,
         body: ''
     }
-    console.log(JSON.stringify(event));
     // console.log(JSON.stringify(event));
     const body = JSON.parse(event.body);
 
     const transactions = createTransactions(body);
+    console.log(JSON.stringify(transactions));
 
     let [isWrite, message] = await writeToDynamo(transactions);
 
     console.log(isWrite);
     if (isWrite) {
-        [isWrite, message] = await createSchedules(body);
+        [isWrite, message] = await createSchedules(transactions);
 
         if (isWrite) {
             final_return.body = JSON.stringify(message);
