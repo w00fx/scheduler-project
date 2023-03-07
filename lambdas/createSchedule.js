@@ -3,54 +3,129 @@ const Scheduler = require('aws-sdk/clients/scheduler');
 const DynamoDB = require('aws-sdk/clients/dynamodb')
 const SchedulerClient = new Scheduler();
 const uuid = require('uuid');
+const dynamoClient = new DynamoDB.DocumentClient();
 
 const {EXECUTE_ARN, ROLE_ARN, TABLE_NAME} = process.env
 
-const writeToDynamo = (scheduler_input, body) => {
-    const dynamoClient = new DynamoDB.DocumentClient();
+const writeToDynamo = async (items) => {
     const params = {
-        TableName: TABLE_NAME,
-        Item: {
-            ...scheduler_input,
-            status: 'PENDING',
-            trigger_time: body.trigger_time,
-            custom_attributes: body.custom_attributes
+        TransactItems: items
+    };
+    try {
+        await dynamoClient.transactWrite(params).promise();
+        return [true, '']
+    } catch (error) {
+        if (error.code === "TransactionCanceledException") {
+            console.error(`One or more items already exists in table. Error: ${error.message}`);
+            return [false, 'One or more items already exists in table.']
         }
-    }
-    dynamoClient.put(params, function(err, data) {
-        if (err) console.log(`Error: ${err}`);
-        else console.log(`Object written in DynamoDB.`);
+        else {
+            console.error(`Unexpected error. Error: ${error.message}`);
+            return [false, 'Unexpected error.']
+        }
+    };
+};
+
+const createTransactions = (items) => {
+    const transactions = items.map(item => {
+        return {
+            Put: {
+                TableName: TABLE_NAME,
+                Item: {
+                    ...item,
+                    status: 'PENDING'
+                },
+                ConditionExpression: 'attribute_not_exists(#type)',
+                ExpressionAttributeNames: {
+                    '#type': 'type'
+                },
+            }
+        }
     });
-}
+    return transactions;
+};
+
+const createSchedules = async (items) => {
+    const created_schedules = [];
+    const failed_schedules = [];
+    for (const item of items) {
+        const name = uuid.v4();
+        const input = {
+            type: item.type,
+            identifier: item.identifier,
+            schedule_name: name,
+            payload: item.payload,
+        }
+
+        try {
+            const resp = await SchedulerClient.createSchedule({
+                Name: name,
+                ScheduleExpression: `at(${item.trigger_time})`,
+                FlexibleTimeWindow: {
+                    Mode: 'OFF'
+                },
+                Target: {
+                    Arn: EXECUTE_ARN,
+                    RoleArn: ROLE_ARN,
+                    Input: JSON.stringify(input)
+                }
+            }).promise();
+            created_schedules.push(resp.ScheduleArn);
+            console.log(`Schedule created. Arn: ${resp.ScheduleArn}`);
+        } catch (error) {
+            console.log(`Error has happened. Error: ${error.message}`);
+            failed_schedules.push(input);
+        }
+    };
+    if (failed_schedules.length > 0) {
+        return [false, {
+            message: "Schedules failed.",
+            failed_schedules: failed_schedules,
+            succeded_schedules: created_schedules
+        }]
+    } else {
+        return [true, {
+            message: "Schedules created.",
+            failed_schedules: failed_schedules,
+            succeded_schedules: created_schedules
+        }]
+    }
+};
 
 exports.handler = async (event) => {
-    const body = JSON.parse(event.body);
-    const name = uuid.v4();
-
-    const input = {
-        type: body.type,
-        identifier: body.identifier,
-        schedule_name: name,
-        payload: body.payload,
+    const final_return = {
+        statusCode: 201,
+        body: ''
     }
+    console.log(JSON.stringify(event));
+    // console.log(JSON.stringify(event));
+    const body = JSON.parse(event.body);
 
-    const resp = await SchedulerClient.createSchedule({
-        Name: name,
-        ScheduleExpression: `at(${body.trigger_time})`,
-        FlexibleTimeWindow: {
-            Mode: 'OFF'
-        },
-        Target: {
-            Arn: EXECUTE_ARN,
-            RoleArn: ROLE_ARN,
-            Input: JSON.stringify(input)
+    const transactions = createTransactions(body);
+
+    let [isWrite, message] = await writeToDynamo(transactions);
+
+    console.log(isWrite);
+    if (isWrite) {
+        [isWrite, message] = await createSchedules(body);
+
+        if (isWrite) {
+            final_return.body = JSON.stringify(message);
+            return final_return;
+        } else {
+            final_return.body = JSON.stringify(message);
+            final_return.statusCode = 500;
+            return final_return;
         }
-    }).promise()
-    console.log(`Schedule created. Arn: ${resp.ScheduleArn}`)
-    await writeToDynamo(input, body);
-
-    return {
-        statusCode: 200,
-        body: resp.ScheduleArn
+    } else {
+        if (message === 'Unexpected error.') {
+            final_return.statusCode = 500;
+            final_return.body = message;
+            return final_return;
+        } else {
+            final_return.statusCode = 409;
+            final_return.body = message;
+            return final_return;
+        }
     }
 };

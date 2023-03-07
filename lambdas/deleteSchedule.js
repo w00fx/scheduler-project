@@ -1,6 +1,5 @@
 "use strict";
-const AWSXRay = require('aws-xray-sdk-core');
-const Scheduler = AWSXRay.captureAWS(require('aws-sdk/clients/scheduler'));
+const Scheduler = require('aws-sdk/clients/scheduler');
 const SchedulerClient = new Scheduler();
 
 const EXECUTE_ARN = ''

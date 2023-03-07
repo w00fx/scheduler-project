@@ -10,13 +10,14 @@
   "devDependencies": {
     "aws-sdk-js-codemod": "^0.14.0",
     "serverless": "^3.28.1",
+    "serverless-dotenv-plugin": "^4.0.2",
     "serverless-export-outputs": "^1.0.2",
     "serverless-iam-roles-per-function": "^3.2.0",
+    "serverless-offline": "^12.0.4",
     "serverless-plugin-common-excludes": "^4.0.0",
     "serverless-plugin-include-dependencies": "^5.0.0"
   },
   "dependencies": {
-    "aws-sdk": "^2.x",
-    "aws-xray-sdk": "^3.4.1"
+    "aws-sdk": "^2.x"
   }
 }

@@ -1,12 +1,16 @@
 service: scheduler-poc
 frameworkVersion: '3'
 
+useDotenv: true
+
 plugins:
   - serverless-iam-roles-per-function
   # - serverless-mocha-plugin
   - serverless-export-outputs
   - serverless-plugin-common-excludes
   - serverless-plugin-include-dependencies
+  - serverless-offline
+  - serverless-dotenv-plugin
 
 custom:
   exportOutputs:
@@ -120,7 +124,7 @@ functions:
           - "arn:aws:scheduler:${self:provider.region}:${aws:accountId}:schedule-group/*"
       - Effect: Allow
         Action:
-          - dynamodb:PutItem
+          - dynamodb:DeleteItem
         Resource: !GetAtt schedulerTable.Arn
       - Effect: Allow
         Action:
